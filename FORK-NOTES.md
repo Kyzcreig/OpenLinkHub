@@ -1,56 +1,54 @@
 # Fork notes — Kyzcreig/OpenLinkHub
 
 This is a fork of [jurkovic-nikola/OpenLinkHub](https://github.com/jurkovic-nikola/OpenLinkHub)
-with two additions developed against a real iCUE LINK System Hub on **firmware 3.10.636**. `main`
+with a custom teal-pink RGB effect and one now-superseded #452 investigation branch developed against a real iCUE LINK System Hub on **firmware 3.10.636**. `main`
 tracks upstream; the work lives on the branches below.
 
-> ⚠️ **Use at your own risk.** These changes were reverse-engineered and verified on **one** hardware
-> setup (a LINK System Hub on fw 3.10.636 driving 10× LX/RX fans + a TITAN pump + an LS350 Aurora
-> strip on the LINK adapter). The upstream maintainer runs a similar rig **without** needing the #452
-> fix, so the firmware can clearly drive LEDs as-is on some setups — meaning the dark-fans bug is
-> setup/firmware-revision specific, not universal. If upstream works for you, **use upstream.** Only
-> reach for this fork if you hit the exact symptom below.
+> ⚠️ **Use upstream unless you have a specific reason not to.** The `teal-pink-hue-cycle` effect is
+> the useful addition here. The older #452 "1122-byte frame" branch is now considered **investigation
+> only**: the likely miss was that the iCUE LINK adapter strip was not activated in the OpenLinkHub
+> dashboard (`ExternalAdapter {"1":0}`). After selecting **adapter ID 10 = `iCUE LINK 5000T RGB`**, stock
+> OpenLinkHub sees the 204 case-strip LEDs correctly. Retest is pending visual confirmation from the
+> owner, so do **not** treat the #452 branch as a required firmware fix.
 
 ---
 
-## 1. Fix: fans/pump stay dark on fw 3.10.636 (issue #452)
+## 1. Superseded investigation: dark LEDs on fw 3.10.636 (issue #452)
 
 **Branch:** [`fix/452-fw31-1122byte-frame`](../../tree/fix/452-fw31-1122byte-frame) ·
 **Upstream issue:** [#452](https://github.com/jurkovic-nikola/OpenLinkHub/issues/452)
 
-**Symptom:** OpenLinkHub runs, every device is detected, brightness/profile/colors are all provably
-correct, RPM/coolant telemetry works — but the fans and pump LEDs are **completely dark**, while the
-same hub lights perfectly under Windows iCUE/SignalRGB on the same firmware. There is **no**
-`Connection timed out` / `Unable to write` error in `stdout.log` (that error is a *different*,
-power-cycle-fixable wedge — this is not that).
+**Current status (2026-06-18): likely dashboard configuration, not a firmware/write-size bug.** The
+OpenLinkHub profile originally had the LINK Adapter set to `None`:
 
-**Test hardware:** iCUE LINK System Hub `1b1c:0c3f`, `bcdDevice 1.00`, fw 3.10.636, connected by **cable to an internal USB header** (enumerates under the motherboard AMD xHCI root hub — not a PCIe-connector hub). Cluster: TITAN 360 AIO pump + 6x LX + 3x RX fans + a LINK-adapter RGB strip (the 204-LED strip region + 170-LED fan region that make up the 374-LED frame).
-
-**Root cause:** on this firmware the hub wants a **1122-byte LED frame** = one **374-LED** colour
-buffer split **204 (LINK-adapter strip zone) | 170 (fan zone)**, with **both** zones carrying real
-per-LED colour. Stock builds emit short frames and the fan zone never gets written. (An earlier
-analysis misread the fan zone's bytes as a fixed `5d dd 32` "terminator" — it isn't; that was just
-the fan colour in every reference capture happening to be green.)
-
-**Build & run:**
-```bash
-git clone https://github.com/Kyzcreig/OpenLinkHub.git
-cd OpenLinkHub
-git checkout fix/452-fw31-1122byte-frame
-go build .
-go test ./src/devices/lsh/ -run Frame   # regression guard for the 374-slot frame
-# install over your existing binary (back up the stock one first):
-sudo systemctl stop OpenLinkHub
-sudo cp /opt/OpenLinkHub/OpenLinkHub /opt/OpenLinkHub/OpenLinkHub.stock.bak
-sudo cp ./OpenLinkHub /opt/OpenLinkHub/OpenLinkHub
-sudo systemctl start OpenLinkHub
+```json
+"ExternalAdapter": { "1": 0 }
 ```
 
-**Verify it's actually working** (don't trust the API success message — read the wire): a Linux
-`usbmon` capture should show full **1122-byte** `0x0464` frames with distinct per-slot colours, and
-commanding **black `(0,0,0)`** should turn every zone off (if a zone stays lit on black, that zone
-isn't being written). The fix ships with a regression test asserting the fan zone is never a hardcoded
-literal.
+For ACE-AI's Corsair iCUE 5000T case, the correct dashboard choice is **adapter ID 10 =
+`iCUE LINK 5000T RGB`**. After setting it via `/api/hub/linkAdapter`, the live device object exposes
+204 LEDs across six case-strip subdevices:
+
+- Top Left Strip: 32
+- Front Left Strip: 38
+- Bottom Left Strip: 32
+- Bottom Right Strip: 32
+- Front Right Strip: 38
+- Top Right Strip: 32
+
+A short stock-binary retest with adapter ID 10 in place showed stock OpenLinkHub 0.8.8 starts cleanly,
+sees the 204 adapter LEDs, accepts static RGB writes, and keeps pump telemetry healthy. The remaining
+missing proof is **physical visual confirmation** from the owner that stock+adapter-configured lights
+the rig; until then, this branch should be treated as a debugging artifact, not a recommended fix.
+
+**Test hardware:** iCUE LINK System Hub `1b1c:0c3f`, `bcdDevice 1.00`, fw 3.10.636, connected by
+**cable to an internal USB header** (enumerates under the motherboard AMD xHCI root hub — not a
+PCIe-connector hub). Cluster: TITAN 360 AIO pump + 6× LX + 3× RX fans + iCUE LINK 5000T RGB case
+strip system (204-LED adapter region + 170-LED fan/pump region).
+
+**Do this before trying any fork branch:** open the OpenLinkHub dashboard, find the `iCUE LINK ADAPTER`
+channel, and select the actual attached strip/case device (for ACE-AI: `iCUE LINK 5000T RGB`). Then
+set a stock profile such as `static` and visually verify the LEDs.
 
 ---
 
@@ -80,7 +78,7 @@ start/end-colour API. It ships its **own** correct float HSV→RGB conversion ra
 
 **Build & run:**
 ```bash
-git checkout feat/tpc-standalone   # or feat/teal-pink-hue-cycle if you also need the #452 fix
+git checkout feat/tpc-standalone   # preferred; no #452 dependency
 go build .
 # install as above, then assign the effect via the web UI (http://localhost:27003)
 # or POST /api/color with profile "teal-pink-hue-cycle".

@@ -2,6 +2,9 @@
 An open-source Linux interface for iCUE LINK Hub and other Corsair AIOs, Hubs.
 Manage RGB lighting, fan speeds, system metrics, as well as keyboards, mice, and headsets via a web dashboard.
 
+> **ℹ️ Fork note:** this fork adds a fw-3.10.636 dark-fans fix (issue #452) and a `teal-pink-hue-cycle` RGB effect (PR #457). See **[FORK-NOTES.md](FORK-NOTES.md)** for build steps and the use-at-your-own-risk framing. `main` tracks upstream.
+
+
 ![Build](https://github.com/jurkovic-nikola/OpenLinkHub/actions/workflows/go.yml/badge.svg)
 [![](https://dcbadge.limes.pink/api/server/https://discord.gg/mPHcasZRPy?style=flat)](https://discord.gg/mPHcasZRPy)
 

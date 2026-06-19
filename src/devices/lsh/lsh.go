@@ -332,6 +332,7 @@ var (
 	}
 	rgbProfileUpgrade = []string{
 		"arc",
+		"teal-pink-hue-cycle",
 		"led",
 		"nebula",
 		"marquee",

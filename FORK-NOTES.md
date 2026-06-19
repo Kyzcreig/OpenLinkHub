@@ -24,6 +24,8 @@ same hub lights perfectly under Windows iCUE/SignalRGB on the same firmware. The
 `Connection timed out` / `Unable to write` error in `stdout.log` (that error is a *different*,
 power-cycle-fixable wedge — this is not that).
 
+**Test hardware:** iCUE LINK System Hub `1b1c:0c3f`, `bcdDevice 1.00`, fw 3.10.636, connected by **cable to an internal USB header** (enumerates under the motherboard AMD xHCI root hub — not a PCIe-connector hub). Cluster: TITAN 360 AIO pump + 6x LX + 3x RX fans + a LINK-adapter RGB strip (the 204-LED strip region + 170-LED fan region that make up the 374-LED frame).
+
 **Root cause:** on this firmware the hub wants a **1122-byte LED frame** = one **374-LED** colour
 buffer split **204 (LINK-adapter strip zone) | 170 (fan zone)**, with **both** zones carrying real
 per-LED colour. Stock builds emit short frames and the fan zone never gets written. (An earlier

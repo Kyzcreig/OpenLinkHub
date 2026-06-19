@@ -4522,7 +4522,7 @@ func (d *Device) setDeviceColor() {
 			}
 		}
 		buffer = rgb.SetColor(static)
-		d.writeColor(buffer) // Write color once
+		d.writeColorStatic452(buffer) // Write color once
 		return
 	}
 
@@ -4565,7 +4565,7 @@ func (d *Device) setDeviceColor() {
 						buff = append(buff, d.generateRgbEffect(k, d.Devices[k].LedChannels, &startTime, d.Devices[k].RGB, 0)...)
 					}
 				}
-				d.writeColor(buff)
+				d.writeColorLive452(buff, keys, &startTime)
 				time.Sleep(20 * time.Millisecond)
 			}
 		}

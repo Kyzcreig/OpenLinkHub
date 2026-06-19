@@ -66,9 +66,22 @@ the desaturated centre of the colour space — i.e. **no white/washed flash** at
 the failure mode of a naive RGB lerp between the two colours.
 
 Implemented as a native Go effect (`src/rgb/tealpinkcycle.go`), wired into the `rgbModes` whitelist and
-the `generateRgbEffect` switch like any built-in effect, and configured through the normal
-start/end-colour API. It ships its **own** correct float HSV→RGB conversion rather than the package's
-`HsvToRgb` helper.
+the `generateRgbEffect` switch like any built-in effect, registered as a first-class profile in
+`database/rgb.json` (so `GetRgbProfile` resolves it for all users and the RGB Editor shows its
+start/end colour pickers), and added to `rgbProfileUpgrade` in `lsh.go` (so existing users' per-device
+rgb DBs get the profile injected on startup). It ships its **own** correct float HSV→RGB conversion
+rather than the package's `HsvToRgb` helper.
+
+> **PR #457 was closed by the maintainer (2026-06-19).** His feedback: the original PR registered only
+> the render code, so on a clean install the profile never upgraded into the device DB (not selectable/
+> configurable, no RGB-Editor colour pickers), and he noted the look is approximable with the newer
+> `arc` mode. The registration gap is now **fixed on both branches** (the `database/rgb.json` +
+> `rgbProfileUpgrade` additions above), verified end-to-end on real hardware: simulate a fresh user by
+> removing the profile from the device DB, restart, and `upgradeRgbProfile` re-injects it
+> (`Upgrading RGB profile profile=teal-pink-hue-cycle` in the log) with correct teal/pink colours. Note
+> on the `arc` overlap: `arc` in **random** mode is a full rainbow, and in **colour** mode it uses a
+> linear RGB lerp (`lerpColor`) which reintroduces the desaturated-midpoint white flash this effect was
+> built to avoid — so it's close but not an exact substitute for a bounded teal↔pink no-flash sweep.
 
 > **Note for maintainer / other contributors:** the package `HsvToRgb` in `src/rgb/rotator.go` has an
 > integer-division bug in its sector term (`(h/60)*2`) that produces hue-shifted output for most hues.

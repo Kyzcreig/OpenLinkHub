@@ -27,10 +27,84 @@ const (
 	hueLedsPerFan = 18   // LEDs per breath (spatial WAVELENGTH, not a device LED count). The arc tiles every 18 LEDs so the teal->pink sine ping-pong FLOWS across fans AND long case strips (iCUE rainbow-flow bounded to the teal->pink arc -- the look Ace wants, inspired by the HA zsw teal_pink sine-wave model). Tune this for density: smaller=tighter waves, larger=longer/calmer. Do NOT set ring=device-length (stretches strips into one flat breath).
 	hueSmooth     = 0.6  // per-ring blur strength (0=off .. ~0.8 soft); 0.6 glassy
 	hueKernel     = 5    // 3=tight neighbours; 5=gaussian 2-each-side (glassier)
+	// hueWaveMode = the TEMPORAL wave shape (how the breath moves teal<->pink over time):
+	//   "sine"     = smooth glide; slows at the teal/pink endpoints, races through blue/purple
+	//                (lingers on the ends, less dwell on the middle hues).
+	//   "triangle" = constant speed; even dwell PER HUE (more visible blue/purple), tiny
+	//                pause-and-reverse feel at the endpoints. Mirrors the HA zsw wave_mode knob.
+	// A/B by editing this one constant + rebuild/redeploy (cheap). Default triangle (Ace 2026-06-21).
+	hueWaveMode = "triangle"
+	// hueLumaLift = brighten the intrinsically-DIM part of the arc (blue ~241deg has only ~7%%
+	// of white luminance; teal/cyan ~50-78%) so blue/purple stop receding next to bright teal/pink.
+	// 0 = off (true full-saturation arc); 1 = full lift to hueLumaTarget. Cost: lifted blue/purple
+	// desaturate toward pastel (pure blue cannot brighten without adding R/G). GRADIENT-EVENNESS knob.
+	hueLumaLift   = 0.0  // 0 = OFF (Ace reverted strong lift 2026-06-21; revisiting strips specifically)
+	hueLumaTarget = 0.45 // target Rec.709 luminance floor (0..1) that dim hues are lifted toward
+	// hueMidWidenAmt = blue/purple band widener (BOTH fans AND strips, Ace 2026-06-21). Remaps the wave
+	// position toward the arc MIDDLE so more LEDs land in blue/purple = a physically wider, more visible
+	// blue/purple band. Helps the diffused 5000T strips most (their narrow dim band was swallowed by bright
+	// teal/pink neighbours) but applied everywhere for a consistent look. 0=off; ~1=widest. Pure hue remap
+	// => NO desaturation/pastel cost (unlike luma-lift).
+	hueMidWidenAmt = 1.0
 )
 
 func huePingpong(norm float64) float64 {
 	return (math.Sin(2*math.Pi*norm-math.Pi/2) + 1) / 2
+}
+
+// hueTriangle is a constant-velocity 0->1->0 ping-pong (linear ramps). Even dwell per
+// hue across the arc (more blue/purple) vs sine which lingers at the endpoints.
+func hueTriangle(norm float64) float64 {
+	if norm < 0.5 {
+		return 2 * norm
+	}
+	return 2 * (1 - norm)
+}
+
+// hueWaveShape dispatches on hueWaveMode so the temporal wave is a live-tunable knob.
+func hueWaveShape(norm float64) float64 {
+	if hueWaveMode == "triangle" {
+		return hueTriangle(norm)
+	}
+	return huePingpong(norm)
+}
+
+// hueMidWiden remaps wave position t toward the arc middle (0.5): t + (A/2pi)*sin(2pi*t).
+// Flattens dwell near the middle so MORE LEDs land in blue/purple. Strip-only (diffusion fix).
+func hueMidWiden(t, a float64) float64 {
+	if a <= 0 {
+		return t
+	}
+	v := t + (a/(2*math.Pi))*math.Sin(2*math.Pi*t)
+	if v < 0 {
+		v = 0
+	}
+	if v > 1 {
+		v = 1
+	}
+	return v
+}
+
+// hueLumaCompensate brightens dim hues toward hueLumaTarget perceived luminance.
+// Scales V (all channels up) only when the hue is below target, blended by hueLumaLift,
+// clamping channels at 255 (clip slightly desaturates the deepest blue -- acceptable).
+func hueLumaCompensate(cr, cg, cb int) (int, int, int) {
+	if hueLumaLift <= 0 {
+		return cr, cg, cb
+	}
+	l := (0.2126*float64(cr) + 0.7152*float64(cg) + 0.0722*float64(cb)) / 255.0
+	if l <= 0 {
+		return cr, cg, cb
+	}
+	want := hueLumaTarget / l
+	if want < 1.0 {
+		want = 1.0 // never DARKEN already-bright hues
+	}
+	scale := 1.0 + hueLumaLift*(want-1.0)
+	nr := int(float64(cr)*scale + 0.5)
+	ng := int(float64(cg)*scale + 0.5)
+	nb := int(float64(cb)*scale + 0.5)
+	return clamp8(nr), clamp8(ng), clamp8(nb)
 }
 
 func hueSkew(u, bias float64) float64 {
@@ -88,9 +162,11 @@ func (r *ActiveRGB) TealPinkHueCycle(startTime *time.Time) {
 		if norm < 0 {
 			norm += 1.0
 		}
-		t := hueSkew(huePingpong(norm), huePinkBias)
+		t := hueSkew(hueWaveShape(norm), huePinkBias)
+		t = hueMidWiden(t, hueMidWidenAmt)
 		hue := h0 + (h1-h0)*t
 		cr, cg, cb := hueArcHSV(hue, 1.0, float64(v)/255.0)
+		cr, cg, cb = hueLumaCompensate(cr, cg, cb)
 		cols[i] = [3]int{cr, cg, cb}
 	}
 

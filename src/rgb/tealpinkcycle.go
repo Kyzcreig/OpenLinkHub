@@ -24,7 +24,7 @@ const (
 	huePinkBias   = 1.5  // >1 = lingers on pink/purple side; 1=even; <1=teal-heavy
 	hueWaveS      = 9.0  // seconds for one full teal->pink->teal breath
 	hueDir        = -1.0 // wave travel direction around the ring (+1/-1)
-	hueLedsPerFan = 8    // LEDs per breath (spatial wavelength). 8 = MEDIA-PC parity; the arc tiles every 8 LEDs so fans AND long case strips show the SAME rotating teal->pink wave (NOT one stretched breath, NOT a wide rainbow band).
+	hueLedsPerFan = 18   // LEDs per breath (spatial WAVELENGTH, not a device LED count). The arc tiles every 18 LEDs so the teal->pink sine ping-pong FLOWS across fans AND long case strips (iCUE rainbow-flow bounded to the teal->pink arc -- the look Ace wants, inspired by the HA zsw teal_pink sine-wave model). Tune this for density: smaller=tighter waves, larger=longer/calmer. Do NOT set ring=device-length (stretches strips into one flat breath).
 	hueSmooth     = 0.6  // per-ring blur strength (0=off .. ~0.8 soft); 0.6 glassy
 	hueKernel     = 5    // 3=tight neighbours; 5=gaussian 2-each-side (glassier)
 )

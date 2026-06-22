@@ -21,7 +21,7 @@ import (
 // configured StartColor/EndColor hues so the standard set-colors API configures
 // the palette; the motion/bias/smoothing live here as named constants.
 const (
-	huePinkBias   = 1.5  // >1 = lingers on pink/purple side; 1=even; <1=teal-heavy
+	huePinkBias   = 1.0  // 1.0 = EVEN distribution across the teal->pink arc (full gradient, Ace-approved 2026-06-21). >1 lingers on pink (thin middle); <1 teal-heavy. GRADIENT-RICHNESS knob.
 	hueWaveS      = 9.0  // seconds for one full teal->pink->teal breath
 	hueDir        = -1.0 // wave travel direction around the ring (+1/-1)
 	hueLedsPerFan = 18   // LEDs per breath (spatial WAVELENGTH, not a device LED count). The arc tiles every 18 LEDs so the teal->pink sine ping-pong FLOWS across fans AND long case strips (iCUE rainbow-flow bounded to the teal->pink arc -- the look Ace wants, inspired by the HA zsw teal_pink sine-wave model). Tune this for density: smaller=tighter waves, larger=longer/calmer. Do NOT set ring=device-length (stretches strips into one flat breath).

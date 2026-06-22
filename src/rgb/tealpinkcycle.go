@@ -24,7 +24,7 @@ const (
 	huePinkBias   = 1.5  // >1 = lingers on pink/purple side; 1=even; <1=teal-heavy
 	hueWaveS      = 9.0  // seconds for one full teal->pink->teal breath
 	hueDir        = -1.0 // wave travel direction around the ring (+1/-1)
-	hueLedsPerFan = 18   // FALLBACK ring size only (LX fan = 18); the live ring is each device's own LED count -- see TealPinkHueCycle
+	hueLedsPerFan = 8    // LEDs per breath (spatial wavelength). 8 = MEDIA-PC parity; the arc tiles every 8 LEDs so fans AND long case strips show the SAME rotating teal->pink wave (NOT one stretched breath, NOT a wide rainbow band).
 	hueSmooth     = 0.6  // per-ring blur strength (0=off .. ~0.8 soft); 0.6 glassy
 	hueKernel     = 5    // 3=tight neighbours; 5=gaussian 2-each-side (glassier)
 )
@@ -70,16 +70,15 @@ func (r *ActiveRGB) TealPinkHueCycle(startTime *time.Time) {
 		n = 1
 	}
 
-	// ring = how many LEDs one full teal->pink breath spans. Use THIS device's
-	// own LED count so every device tiles the arc exactly once: an 18-LED LX fan,
-	// an 8-LED RX fan, a 20-LED pump, and each case-strip segment all show a single
-	// teal->pink breath. A fixed ring (e.g. 18) only matches LX fans; on an 8-LED RX
-	// fan or a ~200-LED case strip it repeats the arc and smears the
-	// cyan->blue->purple->magenta sweep into a "rainbow" look (ACE-AI 2026-06-21).
-	ring := n
-	if ring < 2 {
-		ring = hueLedsPerFan // single/unknown-length device: fall back to the fan ring
-	}
+	// ring = the spatial wavelength: how many LEDs one full teal->pink breath spans.
+	// This is a FIXED visual wavelength (hueLedsPerFan), NOT the device's LED count.
+	// Keeping it fixed makes every device -- an 18-LED LX fan, an 8-LED RX fan, a
+	// 20-LED pump, and each 32-38-LED case-strip segment -- render the SAME rotating
+	// teal->pink wave (the arc tiles repeatedly across long runs). Matches the
+	// ACE-MEDIA OpenRGB daemon's LEDS_PER_FAN=8. (Setting ring=device-length instead
+	// stretches the strips into one slow flat breath = boring; a too-long fixed ring
+	// like 18 shows the whole 143deg arc at once on long strips = reads as rainbow.)
+	ring := hueLedsPerFan
 
 	// 1) per-LED arc color with ring phase offset
 	cols := make([][3]int, n)

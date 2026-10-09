@@ -79,7 +79,7 @@ func TestParseDeviceTable_ValidReply(t *testing.T) {
 // A correctly typed reply that lost its second 508-byte chunk must be rejected, not half-parsed.
 func TestParseDeviceTable_TruncatedValidReply(t *testing.T) {
 	full := decodeReply(t, goodDeviceTableReply, 1020)
-	for _, n := range []int{512, 300, 100, 15, 8} {
+	for _, n := range []int{400, 300, 100, 15, 8} { // 22-ch table = 488 data bytes, so 512 is NOT truncated
 		if _, err := parseDeviceTable(full[:n]); err == nil {
 			t.Errorf("len %d: expected error for truncated table", n)
 		}

@@ -216,6 +216,7 @@ type Device struct {
 	Rgb                    *rgb.RGB
 	rgbMutex               sync.RWMutex
 	Exit                   bool
+	deviceTableInvalid     bool
 	LCDImage               map[int]*lcd.ImageData
 	lcdRefreshChan         chan struct{}
 	lcdImageChan           chan struct{}
@@ -287,6 +288,8 @@ var (
 	temperaturePullingInterval  = 3000
 	lcdRefreshInterval          = 1000
 	deviceRefreshInterval       = 1000
+	deviceTableRetryInterval    = 30 * time.Second
+	deviceTableRetryAttempts    = 20
 	lcdLedChannels              = 24
 	lcdHeaderSize               = 8
 	lcdBufferSize               = 1024
@@ -462,6 +465,9 @@ func Init(vendorId, productId uint16, serial, path string) *common.Device {
 	d.setupClusterController() // RGB Cluster
 	d.createDevice()           // Device register
 	d.startQueueWorker()       // Queue
+	if d.deviceTableInvalid {
+		d.retryDeviceTable() // Hub returned a malformed device table, keep retrying
+	}
 	logger.Log(logger.Fields{"serial": d.Serial, "product": d.Product}).Info("Device successfully initialized")
 
 	return d.instance
@@ -1033,6 +1039,11 @@ func (d *Device) generateLedObject(amount uint8) map[int]rgb.Color {
 func (d *Device) saveDeviceProfile() {
 	d.deviceLock.Lock()
 	defer d.deviceLock.Unlock()
+
+	if d.deviceTableInvalid && d.DeviceProfile != nil {
+		// Device table is malformed, don't overwrite the stored profile with an empty one
+		return
+	}
 
 	noOverride := false
 	noRgbPerLed := false
@@ -3461,7 +3472,7 @@ func (d *Device) getDeviceData() {
 	sensorData := response[7:]
 	valid := response[7]
 	if valid == 0x01 {
-		for i := 0; i < int(amount); i++ {
+		for i := 0; i < int(amount) && (i+1)*3 <= len(sensorData); i++ {
 			currentSensor := sensorData[i*3 : (i+1)*3]
 			status := currentSensor[0]
 			if status == 0x00 {
@@ -3499,7 +3510,7 @@ func (d *Device) getDeviceData() {
 			logger.Log(logger.Fields{"serial": d.Serial, "data": fmt.Sprintf("% 2x", response), "type": "temperature"}).Info("getDeviceData()")
 		}
 		if valid == 0x00 || valid == 0x01 {
-			for i, s := 0, 0; i < int(amount); i, s = i+1, s+3 {
+			for i, s := 0, 0; i < int(amount) && s+3 <= len(sensorData); i, s = i+1, s+3 {
 				currentSensor := sensorData[s : s+3]
 				status := currentSensor[0]
 				if status == 0x00 {
@@ -3720,34 +3731,36 @@ func (d *Device) getDevices() int {
 		logger.Log(logger.Fields{"serial": d.Serial, "data": fmt.Sprintf("% 2x", response)}).Info("getDevices()")
 	}
 
-	channels := response[6]
-	data := response[7:]
-	position := 0
-	duoPort := 1
-	for i := 1; i <= int(channels); i++ {
-		deviceIdLen := data[position+7]
-		if deviceIdLen == 0 {
-			position += 8
-			continue
+	entries, err := parseDeviceTable(response)
+	if err != nil {
+		if !d.deviceTableInvalid {
+			logger.Log(logger.Fields{"serial": d.Serial, "error": err, "data": fmt.Sprintf("% 2x", response)}).Warn("getDevices() - Malformed device table reply, continuing with 0 devices")
 		}
-		deviceTypeModel := data[position : position+8]
+		d.deviceTableInvalid = true
+		d.Devices = devices
+		return 0
+	}
+	if d.deviceTableInvalid {
+		logger.Log(logger.Fields{"serial": d.Serial}).Info("getDevices() - Device table reply is valid again")
+	}
+	d.deviceTableInvalid = false
+
+	duoPort := 1
+	for _, entry := range entries {
+		i := entry.channel
+		deviceTypeModel := entry.header
 		if deviceTypeModel[2] == 6 || deviceTypeModel[2] == 14 {
 			// iCUE LINK COOLER PUMP LCD
 			// iCUE LINK XD5 Elite LCD
 			lcdAvailable = true
 		}
 
-		deviceId := data[position+8 : position+8+int(deviceIdLen)]
+		deviceId := entry.deviceId
 
 		// Get device definition
 		deviceMeta := d.getSupportedDevice(deviceTypeModel[2], deviceTypeModel[3])
 		if deviceMeta == nil {
 			logger.Log(logger.Fields{"serial": d.Serial, "type": deviceTypeModel[2], "model": deviceTypeModel[3]}).Warn("getDevices() - Device not found in metadata")
-			if deviceIdLen > 0 {
-				position += 8 + int(deviceIdLen)
-			} else {
-				position += 8
-			}
 			continue
 		}
 
@@ -3978,7 +3991,6 @@ func (d *Device) getDevices() int {
 		}
 
 		devices[i] = device
-		position += 8 + int(deviceIdLen)
 	}
 
 	if !lcdAvailable {
@@ -4017,6 +4029,87 @@ func (d *Device) getDevices() int {
 		d.Psu = true
 	}
 	return len(devices)
+}
+
+// deviceTableEntry is a populated channel from a getDevices reply
+type deviceTableEntry struct {
+	channel  int
+	header   []byte // 8-byte header, [2] = device type, [3] = device model
+	deviceId []byte
+}
+
+// parseDeviceTable validates a getDevices reply and walks its channel table with bounds checks.
+// A truncated or mistyped reply is rejected as a whole, so a partial table never replaces the real one.
+func parseDeviceTable(response []byte) ([]deviceTableEntry, error) {
+	if len(response) < 8 {
+		return nil, fmt.Errorf("reply too short: %d bytes", len(response))
+	}
+	if !responseMatch(response, dataTypeGetDevices) {
+		return nil, fmt.Errorf("unexpected data type % 2x, expected % 2x", response[4:6], dataTypeGetDevices)
+	}
+
+	channels := int(response[6])
+	data := response[7:]
+	position := 0
+	var entries []deviceTableEntry
+	for i := 1; i <= channels; i++ {
+		if position+8 > len(data) {
+			return nil, fmt.Errorf("channel %d of %d starts past the end of a %d byte reply", i, channels, len(response))
+		}
+		deviceIdLen := int(data[position+7])
+		if deviceIdLen == 0 {
+			position += 8
+			continue
+		}
+		if position+8+deviceIdLen > len(data) {
+			return nil, fmt.Errorf("channel %d device id (%d bytes) runs past the end of a %d byte reply", i, deviceIdLen, len(response))
+		}
+		entries = append(entries, deviceTableEntry{
+			channel:  i,
+			header:   data[position : position+8],
+			deviceId: data[position+8 : position+8+deviceIdLen],
+		})
+		position += 8 + deviceIdLen
+	}
+	return entries, nil
+}
+
+// retryDeviceTable re-reads the device table until the hub returns a valid reply, then brings devices up.
+// While the table is invalid the hub is left in hardware mode so its built-in fan and pump curve stays in charge.
+func (d *Device) retryDeviceTable() {
+	d.setHardwareMode()
+	logger.Log(logger.Fields{"serial": d.Serial, "interval": deviceTableRetryInterval.String(), "attempts": deviceTableRetryAttempts}).Warn("No devices enumerated, hub left in hardware mode, retrying device table")
+	go func() {
+		for attempt := 1; attempt <= deviceTableRetryAttempts; attempt++ {
+			time.Sleep(deviceTableRetryInterval)
+			if d.Exit {
+				return
+			}
+			d.setSoftwareMode()
+			d.getLedDeviceTypes()
+			amount := d.getDevices()
+			if d.deviceTableInvalid {
+				d.setHardwareMode()
+				continue
+			}
+
+			d.getLedDevices()
+			d.setDeviceProtection()
+			d.setDefaults()
+			d.saveDeviceProfile()
+			d.setupLedProfile()
+			d.getTemperatureProbe()
+			d.pumpInnerLedPosition()
+			if !config.GetConfig().Manual {
+				d.timerSpeed.Stop()
+				d.updateDeviceSpeed()
+			}
+			d.setDeviceColor()
+			logger.Log(logger.Fields{"serial": d.Serial, "devices": amount, "attempt": attempt}).Info("Device table recovered")
+			return
+		}
+		logger.Log(logger.Fields{"serial": d.Serial, "attempts": deviceTableRetryAttempts}).Warn("Device table still malformed, giving up. Restart the service once the hub is fixed")
+	}()
 }
 
 // createPsuFanProfile will generate PSU temperature profile if PSU is present
@@ -4885,7 +4978,7 @@ func (d *Device) getLedDevices() {
 		logger.Log(logger.Fields{"led-data": fmt.Sprintf("% 2x", data), "channels": channels}).Info("LED DEBUG DATA")
 	}
 
-	for i := 1; i <= int(channels); i++ {
+	for i := 1; i <= int(channels) && i*4+4 <= len(data); i++ {
 		var numLEDs uint16 = 0
 		connected := binary.LittleEndian.Uint16(data[i*4:i*4+2]) == 2
 		if connected {
@@ -4927,7 +5020,7 @@ func (d *Device) getLedDeviceTypes() {
 		data := buffer[8:]
 
 		packetLen := (buffer[6] * 2) - 1
-		for i := 0; i < int(packetLen); i++ {
+		for i := 0; i < int(packetLen) && i < len(data); i++ {
 			leds = append(leds, data[i])
 		}
 	}
